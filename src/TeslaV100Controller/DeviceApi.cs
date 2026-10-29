@@ -7,9 +7,9 @@ namespace TeslaV100Controller;
 
 internal static class DeviceApi
 {
-    public static IReadOnlyList<GpuDevice> Enumerate()
+    public static IReadOnlyList<GpuDevice> Enumerate(bool presentOnly = true)
     {
-        using var set = SetupDiGetClassDevsW(IntPtr.Zero, null, IntPtr.Zero, 0x02 | 0x04);
+        using var set = SetupDiGetClassDevsW(IntPtr.Zero, null, IntPtr.Zero, (presentOnly ? 0x02u : 0) | 0x04);
         if (set.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
         var devices = new List<GpuDevice>();
         for (uint i = 0; ; i++)

@@ -31,6 +31,8 @@ internal static class Program
                     Integration.Install(); Store.Save(Store.Load()); return 0;
                 case ["--uninstall"]:
                     Integration.Uninstall(); return 0;
+                case ["--reset"]:
+                    Reset(); return 0;
                 case ["--startup"]:
                     Recovery.Startup(); return 0;
                 case ["--shutdown"]:
@@ -54,48 +56,86 @@ internal static class Program
     {
         while (true)
         {
-            Console.Clear();
-            Console.WriteLine("========== Tesla V100 SXM2 Controller ==========");
+            if (!Console.IsOutputRedirected) Console.Clear();
+            Console.WriteLine("ABOUT");
             Console.WriteLine("Some SXM2 adapters fail with Code 10 after a Windows restart.");
             Console.WriteLine("The fix removes the GPU device at shutdown; Windows redetects it on boot.");
-            Console.WriteLine("Startup waits for the driver, checks Code 10 and restores the selected mode.\n");
-            Status();
-            var options = new List<(string Name, Action Run)>();
-            if (Integration.Status != "Installed") options.Add(("Install Fix", InstallInteractive));
-            if (Integration.Status != "Not installed") options.Add(("Uninstall", Integration.Uninstall));
-            options.Add(("Driver mode (TCC / WDDM)", ModeMenu));
-            if (DeviceApi.Enumerate().Any(x => x.ProblemCode == 10)) options.Add(("Recover Code 10 (restart Windows)", RecoverInteractive));
-            Console.WriteLine("\nOptions:");
+            Console.WriteLine("Startup waits for the driver, checks Code 10 and restores the selected mode.");
+            Console.WriteLine("GitHub: https://github.com/hippogamesunity/NVIDIA-Tesla-V100-controller-for-Windows-11\n");
+            var modes = Status();
+            var options = new List<(string Name, Action? Run)>();
+            if (Integration.Status != "Installed") options.Add(("Install fix", InstallInteractive));
+            if (modes.Count == 0 || !modes.All(x => x == DriverMode.Tcc))
+                options.Add(("Switch mode to TCC", () => SwitchModeInteractive(DriverMode.Tcc)));
+            if (modes.Count == 0 || !modes.All(x => x == DriverMode.Wddm))
+                options.Add(("Switch mode to WDDM", () => SwitchModeInteractive(DriverMode.Wddm)));
+            options.Add(("Reset", ResetInteractive));
+            options.Add(("Exit", null));
+            Console.WriteLine("\nOPTIONS");
             for (int i = 0; i < options.Count; i++) Console.WriteLine($"{i + 1} - {options[i].Name}");
             Console.Write("\nSelect option: ");
             string? input = Console.ReadLine();
             if (input is null) return 0;
             if (!int.TryParse(input, out int selection) || selection < 1 || selection > options.Count) continue;
+            var run = options[selection - 1].Run;
+            if (run is null) return 0;
             try
             {
                 using var operation = new OperationLock();
-                options[selection - 1].Run();
+                run();
             }
             catch (Exception ex) { Report(ex); }
             Pause();
         }
     }
 
-    private static void Status()
+    private static IReadOnlyList<DriverMode?> Status()
     {
         var devices = DeviceApi.Enumerate();
-        if (devices.Count == 0) Console.WriteLine("GPU: no supported V100 SXM2 detected yet.");
+        var modes = new List<DriverMode?>();
+        bool rebootRequired = false;
+        Console.WriteLine("STATUS");
+        if (devices.Count == 0)
+            Console.WriteLine("Device: no supported V100 SXM2 detected yet.\nCode: not available\nMode: not available\nRegistry path: not available");
         foreach (var device in devices)
         {
-            string mode = Gpu.CurrentMode(device)?.ToString() ?? "not available";
-            Console.WriteLine($"GPU: {device.Name} | Code: {device.ProblemCode} | Mode: {mode}");
-            Console.WriteLine($"     {device.InstanceId}");
+            if (modes.Count > 0) Console.WriteLine();
+            var currentMode = Gpu.CurrentMode(device);
+            modes.Add(currentMode);
+            rebootRequired |= Gpu.RequiresReboot(device, currentMode);
+            Console.WriteLine($"Device: {device.Name}");
+            Console.WriteLine($"Code: {device.ProblemCode}");
+            WriteValue("Mode", ModeName(currentMode), green: currentMode == DriverMode.Wddm);
+            Console.WriteLine($"Registry path: {device.RegistryPath}");
         }
+        Console.WriteLine($"Log path: {AppPaths.LogFile}");
         var settings = Store.Load();
-        Console.WriteLine($"Fix: {Integration.Status}");
-        Console.WriteLine($"Saved mode: {settings.DesiredMode} | Reboot guard: {(settings.RecoveryPending ? "pending / protected" : "clear")}");
-        Console.WriteLine($"Log: {AppPaths.LogFile}");
+        bool installed = Integration.Status == "Installed";
+        Console.WriteLine("\nSETTINGS");
+        WriteValue("Fix device error on startup", installed ? "Enabled" : "Disabled", green: installed);
+        Console.WriteLine($"Change device mode on startup: {(installed && settings.DesiredMode != DriverMode.Unchanged ? ModeName(settings.DesiredMode) : "Disabled")}");
+        Console.WriteLine($"Reboot required: {(rebootRequired ? "Yes" : "No")}");
+        return modes;
     }
+
+    private static void WriteValue(string label, string value, bool green)
+    {
+        Console.Write($"{label}: ");
+        if (!green || Console.IsOutputRedirected) { Console.WriteLine(value); return; }
+        var previous = Console.ForegroundColor;
+        try
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.Write(value);
+        }
+        finally { Console.ForegroundColor = previous; }
+        Console.WriteLine();
+    }
+
+    private static string ModeName(DriverMode? mode) => mode switch
+    {
+        DriverMode.Tcc => "TCC", DriverMode.Wddm => "WDDM", _ => "not available"
+    };
 
     private static void InstallInteractive()
     {
@@ -110,17 +150,25 @@ internal static class Program
         if (Confirm("Restart Windows now?")) Recovery.RestartAfterRemoval(Store.Load(), manual: true);
         else Console.WriteLine("Restart cancelled. Installed settings are retained.");
     }
-    private static void ModeMenu()
+    private static void SwitchModeInteractive(DriverMode mode)
     {
-        Console.WriteLine("1 - TCC (compute)\n2 - WDDM (graphics)\n3 - Keep current mode at startup");
-        Console.Write("Select option: ");
-        DriverMode? mode = Console.ReadLine()?.Trim() switch
-        {
-            "1" => DriverMode.Tcc, "2" => DriverMode.Wddm, "3" => DriverMode.Unchanged, _ => null
-        };
-        if (mode is null) return;
-        bool apply = mode != DriverMode.Unchanged && Confirm("Close GPU applications. Apply now by restarting the GPU only?");
-        ChangeMode(mode.Value, apply);
+        if (Confirm($"Close GPU applications. Switch to {mode.ToString().ToUpperInvariant()} by restarting the GPU only?"))
+            ChangeMode(mode, apply: true);
+    }
+    private static void ResetInteractive()
+    {
+        Console.WriteLine("Reset removes the startup task, shutdown policy and saved settings, and restores the original driver registry values.");
+        Console.WriteLine("For changes made before registry backups were available, TCC defaults are restored.");
+        if (Confirm("Reset all controller settings?")) Reset();
+    }
+    private static void Reset()
+    {
+        Gpu.ResetRegistry();
+        Integration.Uninstall();
+        Microsoft.Win32.Registry.LocalMachine.DeleteSubKeyTree(@"SOFTWARE\V100AutoRecovery", false);
+        Gpu.CompleteRegistryReset();
+        Log.Write("Reset completed. Driver registry values restored; startup/shutdown fixes and saved settings removed.");
+        Log.Write("If Reboot required is yes, save your work and restart Windows to apply the restored driver settings.");
     }
     private static void ChangeMode(DriverMode mode, bool apply)
     {
@@ -160,6 +208,7 @@ internal static class Program
         --status           Read GPU, driver, preference and installation status
         --install          Install startup/shutdown integration; does not reboot
         --uninstall        Remove integration and saved preferences; keep current GPU mode
+        --reset            Remove integration/settings and restore original driver registry values
         --mode tcc|wddm     Save preference and apply it by restarting the GPU only
         --mode keep         Stop restoring a driver mode at boot
         --startup          SYSTEM boot task: wait for driver, recover Code 10, restore mode

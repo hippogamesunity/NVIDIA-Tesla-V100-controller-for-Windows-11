@@ -14,6 +14,7 @@ internal interface IGpuController
 
 internal sealed class GpuController(Log log) : IGpuController
 {
+    private readonly ModeRegistry modeRegistry = new(AppPaths.RegistryBackupFile);
     public IReadOnlyList<GpuDevice> Enumerate() => DeviceApi.Enumerate();
     private static string? SmiPath => new[]
     {
@@ -41,10 +42,8 @@ internal sealed class GpuController(Log log) : IGpuController
         if (desired == DriverMode.Unchanged || CurrentMode(device) == desired) return;
         if (!device.NvidiaBound || device.ProblemCode != 0 || !device.Started)
             throw new InvalidOperationException("Wait for a working NVIDIA driver before changing mode.");
-        using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\" + device.DriverKey, true)
-                        ?? throw new IOException("GPU driver registry key not found.");
-        if (!(key.GetValue("DriverDesc") as string ?? "").Contains("V100", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Driver key no longer belongs to V100; operation cancelled.");
+        using var key = OpenDriverKey(device, writable: true);
+        modeRegistry.Capture(device, key);
 
         // Empirically verified WDDM workaround on a bare-metal SXM2 V100 with 582.99.
         // No nvidia-smi -dm fallback: that driver returns Not Supported with exit code 0.
@@ -69,6 +68,39 @@ internal sealed class GpuController(Log log) : IGpuController
         }
         throw new IOException($"Mode was requested, but a working {desired} GPU was not verified. Windows was not rebooted.");
     }
+
+    private static RegistryKey OpenDriverKey(GpuDevice device, bool writable)
+    {
+        if (!GpuDevice.IsTarget(device.InstanceId) || string.IsNullOrWhiteSpace(device.DriverKey))
+            throw new InvalidOperationException("A supported V100 driver key is required.");
+        var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\Class\" + device.DriverKey, writable)
+                  ?? throw new IOException("GPU driver registry key not found.");
+        if ((key.GetValue("DriverDesc") as string ?? "").Contains("V100", StringComparison.OrdinalIgnoreCase)) return key;
+        key.Dispose();
+        throw new InvalidOperationException("Driver key no longer belongs to V100; operation cancelled.");
+    }
+
+    public bool RequiresReboot(GpuDevice device, DriverMode? currentMode)
+    {
+        if (device.ProblemCode is 10 or 14) return true;
+        if (!device.NvidiaBound || currentMode is null) return false;
+        using var key = OpenDriverKey(device, writable: false);
+        return ModeRegistry.RequiresRestart(key, currentMode);
+    }
+
+    public void ResetRegistry()
+    {
+        // Include disconnected devices so their saved driver settings are also reset.
+        var devices = DeviceApi.Enumerate(presentOnly: false).Where(x => x.NvidiaBound).ToArray();
+        modeRegistry.VerifyResetTargets(devices);
+        foreach (var device in devices.DistinctBy(x => x.DriverKey, StringComparer.OrdinalIgnoreCase))
+        {
+            using var key = OpenDriverKey(device, writable: true);
+            if (modeRegistry.Restore(device, key)) log.Write($"Restored driver registry values: {device.RegistryPath}");
+        }
+    }
+
+    public void CompleteRegistryReset() => modeRegistry.CompleteReset();
 
     public void RemoveDevices()
     {

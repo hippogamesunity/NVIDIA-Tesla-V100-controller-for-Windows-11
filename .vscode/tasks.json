@@ -1,0 +1,59 @@
+{
+    "version":  "2.0.0",
+    "tasks":  [
+                  {
+                      "label":  "V100: Build Debug",
+                      "type":  "process",
+                      "command":  "${env:WINDIR}/System32/WindowsPowerShell/v1.0/powershell.exe",
+                      "args":  [
+                                   "-NoProfile",
+                                   "-ExecutionPolicy",
+                                   "Bypass",
+                                   "-File",
+                                   "${workspaceFolder}/scripts/dev.ps1",
+                                   "-Action",
+                                   "Build"
+                               ],
+                      "problemMatcher":  "$msCompile",
+                      "group":  "build"
+                  },
+                  {
+                      "label":  "V100: Run as administrator",
+                      "type":  "process",
+                      "command":  "${env:WINDIR}/System32/WindowsPowerShell/v1.0/powershell.exe",
+                      "args":  [
+                                   "-NoProfile",
+                                   "-ExecutionPolicy",
+                                   "Bypass",
+                                   "-File",
+                                   "${workspaceFolder}/scripts/dev.ps1",
+                                   "-Action",
+                                   "Run"
+                               ],
+                      "problemMatcher":  "$msCompile",
+                      "presentation":  {
+                                           "reveal":  "always",
+                                           "panel":  "dedicated"
+                                       }
+                  },
+                  {
+                      "label":  "V100: Publish EXE",
+                      "type":  "process",
+                      "command":  "${env:WINDIR}/System32/WindowsPowerShell/v1.0/powershell.exe",
+                      "args":  [
+                                   "-NoProfile",
+                                   "-ExecutionPolicy",
+                                   "Bypass",
+                                   "-File",
+                                   "${workspaceFolder}/scripts/dev.ps1",
+                                   "-Action",
+                                   "Publish"
+                               ],
+                      "problemMatcher":  "$msCompile",
+                      "group":  {
+                                    "kind":  "build",
+                                    "isDefault":  true
+                                }
+                  }
+              ]
+}

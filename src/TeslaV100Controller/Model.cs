@@ -8,6 +8,8 @@ internal enum DriverMode { Unchanged, Tcc, Wddm }
 internal sealed record GpuDevice(string InstanceId, string Name, int ProblemCode,
     bool Started, string DriverKey, string Service, string BusId)
 {
+    public string RegistryPath => string.IsNullOrWhiteSpace(DriverKey) ? "not available" :
+        @"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Class\" + DriverKey;
     public bool NvidiaBound => Service.Equals("nvlddmkm", StringComparison.OrdinalIgnoreCase)
                                && !string.IsNullOrWhiteSpace(DriverKey);
     // Match PCI IDs even while Windows calls the GPU "3D Video Controller".
@@ -34,7 +36,8 @@ internal static class AppPaths
     public static string DataDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "TeslaV100Controller");
     public static string SettingsFile => Path.Combine(DataDirectory, "settings.json");
-    public static string LogFile => Path.Combine(DataDirectory, "controller.log");
+    public static string RegistryBackupFile => Path.Combine(DataDirectory, "registry-backup.json");
+    public static string LogFile => Path.Combine(DataDirectory, "log.txt");
 }
 
 internal sealed class SettingsStore(string path)

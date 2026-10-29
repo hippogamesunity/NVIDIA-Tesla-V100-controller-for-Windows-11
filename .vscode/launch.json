@@ -1,0 +1,35 @@
+{
+    "version":  "0.2.0",
+    "configurations":  [
+                           {
+                               "name":  "V100 Controller (VS Code as Administrator)",
+                               "type":  "coreclr",
+                               "request":  "launch",
+                               "noDebug":  true,
+                               "preLaunchTask":  "V100: Publish EXE",
+                               "program":  "${workspaceFolder}/bin/Release/TeslaV100Controller.exe",
+                               "cwd":  "${workspaceFolder}/bin/Release",
+                               "args":  [
+
+                                        ],
+                               "envFile":  "${workspaceFolder}/.vscode/dotnet.env",
+                               "console":  "externalTerminal",
+                               "justMyCode":  true
+                           },
+                           {
+                               "name":  "V100 Status (VS Code as Administrator)",
+                               "type":  "coreclr",
+                               "request":  "launch",
+                               "noDebug":  true,
+                               "preLaunchTask":  "V100: Publish EXE",
+                               "program":  "${workspaceFolder}/bin/Release/TeslaV100Controller.exe",
+                               "cwd":  "${workspaceFolder}/bin/Release",
+                               "args":  [
+                                            "--status"
+                                        ],
+                               "envFile":  "${workspaceFolder}/.vscode/dotnet.env",
+                               "console":  "externalTerminal",
+                               "justMyCode":  true
+                           }
+                       ]
+}
